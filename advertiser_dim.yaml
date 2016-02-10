@@ -1,0 +1,13 @@
+ENV : /var/feeds/sqoop_etl/env.yaml
+
+NUM_MAPPERS : '8'
+PRIMARY_ID: ""
+SEQUENCE : "mstr_datamart.sequence_atul"
+HIVE_DB: "mstr_datamart"
+DW_DB: "mstr_datamart"
+SQOOP_COMPRESSION: "SNAPPY"
+OUTPUT_FILE_FORMAT: "TEXT_FILE"
+SKIP_LATEST_MONTHS: "0"
+ORC_STRIPE_SIZE: '268435456'
+ORC_INDEX_STRIDE: '500000'
+
