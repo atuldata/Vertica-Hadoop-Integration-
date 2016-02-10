@@ -7,6 +7,7 @@ import sys
 import yaml
 import time
 import datetime
+sys.path.append('/var/feeds/python')
 from erutil.OnlineDB import OnlineDB
 from erutil.JobLock import JobLock
 from erutil.EtlLogger import EtlLogger
@@ -26,7 +27,6 @@ class sqoop_etl:
     def __init__(self,table_name):
         self.logger = EtlLogger.get_logger(table_name)  # use class name as the log name
         self.lock = JobLock(table_name)  # use class name as the lock name
-        #  Reading configuration file ( YAML file )
         self.env = yaml.load(open(config['ENV']))
 	self.config=config
         self.table = sqoop_table(table_name,config,self.logger)
@@ -35,49 +35,14 @@ class sqoop_etl:
 
     def back_with_static_table(self, primary_id, primary_value, table_name):
         temp_table_name = "temp_" + table_name
-        is_job = self.json.check_job(table_name)
-        
-	if not is_job:
-            data = self.json.update_json_file(table_name)
-            print data
-        else:
-            data = self.json.update_existing_job_without_query(table_name)
-            print data
-	return	
-       	table=self.table.check_table(temp_table_name)
-        
-	columns = self.table.get_temp_table_column(table_name)
-	if not table:
-          self.table.create_temp_table(temp_table_name, table_name)
         
 	self.table.truncate_table(temp_table_name)
-	self.table.pupulate_temp_table(temp_table_name, columns, self.config["SEQUENCE"], self.config["NUM_MAPPERS"],
+	self.table.pupulate_temp_table(temp_table_name, self.config["SEQUENCE"], self.config["NUM_MAPPERS"],
                                               table_name, primary_id[0][0],
                                                primary_value[0][0])
        	self.json.start_job(table_name)
-	 
- 	self.pyhive.load_data_orc(table_name,primary_id[0][0],primary_value[0][0])
-		
+ 	self.pyhive.load_data_orc(table_name)
 	self.pyhive.drop_files(table_name)
-        self.table.update_backup_status(table_name, primary_id[0][0], primary_value[0][0])
-
-    def backup_without_static_table(self, primary_id, primary_value, table_name):
-        secondary_id_list = self.table.get_secondary_id(self.config["SECONDARY_ID"], table_name, primary_id[0][0],
-                                                        primary_value[0][0])
-        for secondary_value in secondary_id_list:
-            is_job = self.json.check_job(table_name)
-            if is_job == 0:
-                data = self.json.update_json_file_with_query(table_name, primary_id[0][0], primary_value[0][0],
-                                                             self.config["SECONDARY_ID"], secondary_value[0])
-                print data
-            else:
-                data = self.json.update_existing_job_with_query(table_name, primary_id[0][0], primary_value[0][0],
-                                                                self.config["SECONDARY_ID"], secondary_value[0])
-                print data
-	
-	self.json.start_job(table_name)
-        self.pyhive.load_data_orc(table_name,primary_id[0][0],primary_value[0][0])
-        self.pyhive.drop_files(table_name)
         self.table.update_backup_status(table_name, primary_id[0][0], primary_value[0][0])
 
     def start_backup(self, table_name):
@@ -85,26 +50,37 @@ class sqoop_etl:
         backup_records =self.table.backup_status(table_name)
 	self.logger.info("backup records running:%s",backup_records)
 	self.logger.info("backup job start time: %s",datetime.datetime.now())
-        while (backup_records == "true"):
+        
+	is_job = self.json.check_job(table_name)
+	if not is_job:
+            data = self.json.update_json_file(table_name)
+        else:
+            data = self.json.update_existing_job_without_query(table_name)
+        print data
 	
+	if_table=self.pyhive.check_if_table_exists(table_name)
+	if not if_table:
+	    self.pyhive.create_original_table(table_name)
+
+	if_flat_table=self.pyhive.check_if_table_exists(table_name+"_text")	
+	if not if_flat_table:
+	    self.pyhive.create_flat_table(table_name)
+	
+       	check_temp_table=self.table.check_table("temp_"+table_name)
+	if not check_temp_table:
+            self.table.create_temp_table("temp_"+table_name, table_name)
+
+       	check_ext_table=self.table.check_table(table_name+"_ext")
+	if not check_ext_table:
+	   self.table.create_external_table(table_name)
+
+        while (backup_records == "true"):
             primary_id = self.table.get_primary_column(table_name)
             primary_value = self.table.get_primary_value(table_name)
-	    
-	    if_table=self.pyhive.check_if_table_exists(table_name)
-	    if not if_table:
-	       self.pyhive.create_original_table(table_name)
-
-	    if_flat_table=self.pyhive.check_if_table_exists(table_name+"_text")	
-	    if not if_flat_table:
-	       self.pyhive.create_flat_table(table_name)
-	    
             self.back_with_static_table(primary_id, primary_value, table_name)
-	    break
+	    if not primary_id:
+	      break			
             backup_records =self.table.backup_status(table_name)
-	
-       	table=self.table.check_table(table_name+"_ext")
-	if not table:
-	   self.table.create_external_table(table_name)
 	self.logger.info("backup job end time: %s",datetime.datetime.now())
 
 
@@ -126,3 +102,4 @@ if __name__ == "__main__":
         raise
     finally:
         etl_instance.lock.releaseLock()
+
